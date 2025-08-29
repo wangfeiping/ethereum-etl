@@ -1,0 +1,64 @@
+# Use Python 3.9 slim image for better security and smaller size
+FROM python:3.9-slim
+
+# Set metadata
+LABEL maintainer="Evgeny Medvedev <evge.medvedev@gmail.com>"
+LABEL version="2.4.2"
+LABEL description="Ethereum ETL - Tools for exporting Ethereum blockchain data to CSV or JSON"
+
+# Set environment variables
+ENV PROJECT_DIR=/ethereum-etl
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+# ENV TINI_VERSION=v0.19.0
+
+# Create non-root user for security
+RUN groupadd -r ethereumetl && useradd -r -g ethereumetl ethereumetl
+
+# Install system dependencies
+# Note: Tini installation commented out due to network connectivity issues
+# For production use, consider using Dockerfile.with-tini or docker run --init
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    # wget \
+    # ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+    # && wget -O /tini https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini \
+    # && chmod +x /tini \
+    # && apt-get remove -y wget \
+    # && apt-get autoremove -y \
+    # && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR $PROJECT_DIR
+
+# Copy requirements first for better layer caching
+COPY setup.py .
+COPY README.md .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -e .[streaming] && \
+    pip cache purge
+
+# Copy source code
+COPY . .
+
+# Create output directory
+RUN mkdir -p /output && chown -R ethereumetl:ethereumetl /output
+
+# Switch to non-root user
+USER ethereumetl
+
+# Set volume for output
+VOLUME ["/output"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import ethereumetl; print('Ethereum ETL is healthy')" || exit 1
+
+# Default command (without Tini)
+# For production environments, consider using Dockerfile.with-tini or docker run --init
+ENTRYPOINT ["python", "ethereumetl.py"]
+CMD ["--help"]

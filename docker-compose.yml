@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  ethereum-etl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ethereum-etl:2.4.2
+    container_name: ethereum-etl
+    volumes:
+      - ./output:/output
+      - ./config:/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ethereum-etl-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ethereumetl; print('Ethereum ETL is healthy')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Example service for exporting blocks
+  ethereum-etl-export:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ethereum-etl:2.4.2
+    container_name: ethereum-etl-export
+    volumes:
+      - ./output:/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ethereum-etl-network
+    command: >
+      python ethereumetl.py export_all
+      --start-block 0
+      --end-block 1000000
+      --batch-size 100
+      --provider-uri https://mainnet.infura.io/v3/YOUR_PROJECT_ID
+      --output-dir /output
+    restart: "no"
+
+  # Example service for streaming
+  ethereum-etl-stream:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ethereum-etl:2.4.2
+    container_name: ethereum-etl-stream
+    volumes:
+      - ./output:/output
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ethereum-etl-network
+    command: >
+      python ethereumetl.py stream
+      --start-block 500000
+      --entity-types block,transaction,log,token_transfer
+      --provider-uri https://mainnet.infura.io/v3/YOUR_PROJECT_ID
+      --output /output/stream_output.json
+    restart: unless-stopped
+
+networks:
+  ethereum-etl-network:
+    driver: bridge
+
+volumes:
+  output:
+    driver: local 
