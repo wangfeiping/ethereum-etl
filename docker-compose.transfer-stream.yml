@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  # 转账交易流式处理服务
+  transfer-stream:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ethereum-etl:transfer-stream
+    container_name: ethereum-etl-transfer-stream
+    volumes:
+      # 数据输出目录
+      - ./data:/app/data
+      # 日志目录
+      - ./logs:/app/logs
+      # 配置文件目录
+      - ./config:/app/config
+      # 同步状态文件目录
+      - ./state:/app/state
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      # 默认环境变量，可通过.env文件覆盖
+      - PROVIDER_URI=https://mainnet.infura.io
+      - START_BLOCK=
+      - PERIOD_SECONDS=10
+      - BATCH_SIZE=100
+      - MAX_WORKERS=5
+      - LAG=0
+      - OUTPUT_FILE=/app/data/transfer_transactions.csv
+      - LOG_FILE=/app/logs/transfer_stream.log
+      - PID_FILE=/app/state/transfer_stream.pid
+      - LAST_SYNCED_BLOCK_FILE=/app/state/last_synced_transfer_block.txt
+      - EXPORT_BLOCKS=false
+      - EXPORT_TRANSACTIONS=true
+    networks:
+      - ethereum-etl-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; print('Transfer stream is healthy' if os.path.exists('/app/state/transfer_stream.pid') else exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    command: >
+      python ethereumetl/cli/stream_transfer_transactions.py
+      --provider-uri ${PROVIDER_URI}
+      --transfer-transactions-output ${OUTPUT_FILE}
+      --last-synced-block-file ${LAST_SYNCED_BLOCK_FILE}
+      --lag ${LAG}
+      --period-seconds ${PERIOD_SECONDS}
+      --batch-size ${BATCH_SIZE}
+      --max-workers ${MAX_WORKERS}
+      --log-file ${LOG_FILE}
+      --pid-file ${PID_FILE}
+      ${START_BLOCK:+--start-block ${START_BLOCK}}
+      ${EXPORT_BLOCKS:+--export-blocks}
+      ${EXPORT_TRANSACTIONS:+--export-transactions}
+
+  # 监控服务（可选）
+  transfer-stream-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ethereum-etl:transfer-stream-monitor
+    container_name: ethereum-etl-transfer-stream-monitor
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./state:/app/state
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    networks:
+      - ethereum-etl-network
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Transfer Stream Monitor Starting...' &&
+        while true; do
+          echo '=== Transfer Stream Status ===' &&
+          echo 'Time: $(date)' &&
+          echo 'PID File: $(cat /app/state/transfer_stream.pid 2>/dev/null || echo "Not found")' &&
+          echo 'Last Synced Block: $(cat /app/state/last_synced_transfer_block.txt 2>/dev/null || echo "Not found")' &&
+          echo 'Output File Size: $(ls -lh /app/data/transfer_transactions.csv 2>/dev/null || echo "Not found")' &&
+          echo 'Log File Size: $(ls -lh /app/logs/transfer_stream.log 2>/dev/null || echo "Not found")' &&
+          echo '==============================' &&
+          sleep 60
+        done
+      "
+
+  # 日志聚合服务（可选）
+  transfer-stream-logs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ethereum-etl:transfer-stream-logs
+    container_name: ethereum-etl-transfer-stream-logs
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - ethereum-etl-network
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Transfer Stream Log Aggregator Starting...' &&
+        tail -f /app/logs/transfer_stream.log
+      "
+
+networks:
+  ethereum-etl-network:
+    driver: bridge
+
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
+  state:
+    driver: local 

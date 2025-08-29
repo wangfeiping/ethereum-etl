@@ -1,252 +1,396 @@
-# Ethereum ETL Docker 使用指南
+# Docker 转账交易流式处理
 
-## 概述
-
-本指南介绍如何使用Docker来运行Ethereum ETL v2.4.2。
+这个文档说明如何使用 Docker 运行转账交易流式处理功能。
 
 ## 快速开始
 
-### 1. 构建Docker镜像
-
-#### 标准版本（推荐用于开发）
-使用提供的构建脚本：
+### 1. 一键启动
 
 ```bash
-./build-docker.sh
+# 快速启动（推荐）
+./quick-start-docker.sh
 ```
 
-或者手动构建：
+### 2. 手动启动
 
 ```bash
-docker build -t ethereum-etl:2.4.2 .
+# 1. 创建环境变量文件
+cp env.example .env
+
+# 2. 编辑 .env 文件，设置您的 Infura 项目ID
+# 特别是 PROVIDER_URI 参数
+
+# 3. 启动服务
+docker-compose -f docker-compose.simple.yml up -d
 ```
 
-#### 生产版本（包含Tini，推荐用于生产）
-```bash
-docker build -f Dockerfile.with-tini -t ethereum-etl:2.4.2-production .
-```
+## 文件说明
 
-**注意**：生产版本包含Tini进程管理器，提供更好的信号处理和进程管理。
+### Docker 配置文件
 
-### 2. 验证镜像
+- `docker-compose.simple.yml` - 简化版 Docker Compose 配置
+- `docker-compose.transfer-stream.yml` - 完整版 Docker Compose 配置（包含监控服务）
+- `Dockerfile` - Docker 镜像构建文件
 
-```bash
-docker run --rm ethereum-etl:2.4.2 --help
-```
+### 启动脚本
+
+- `quick-start-docker.sh` - 快速启动脚本
+- `docker-start-transfer-stream.sh` - 完整功能启动脚本
+
+### 配置文件
+
+- `env.example` - 环境变量示例文件
+- `.env` - 环境变量配置文件（需要创建）
 
 ## 使用方法
 
-### 导出区块和交易数据
+### 基本操作
 
 ```bash
-docker run -v $(pwd)/output:/output ethereum-etl:2.4.2 export_all \
-  --start-block 0 \
-  --end-block 1000000 \
-  --batch-size 100 \
-  --provider-uri https://mainnet.infura.io/v3/YOUR_PROJECT_ID \
-  --output-dir /output
+# 启动服务
+docker-compose -f docker-compose.simple.yml up -d
+
+# 查看日志
+docker-compose -f docker-compose.simple.yml logs -f
+
+# 停止服务
+docker-compose -f docker-compose.simple.yml down
+
+# 重启服务
+docker-compose -f docker-compose.simple.yml restart
+
+# 查看状态
+docker-compose -f docker-compose.simple.yml ps
 ```
 
-### 流式处理区块链数据
+### 使用完整功能脚本
 
 ```bash
-docker run -v $(pwd)/output:/output ethereum-etl:2.4.2 stream \
-  --start-block 500000 \
-  --entity-types block,transaction,log,token_transfer \
-  --provider-uri https://mainnet.infura.io/v3/YOUR_PROJECT_ID \
-  --output /output/stream_output.json
+# 启动服务
+./docker-start-transfer-stream.sh -s
+
+# 启动服务和监控
+./docker-start-transfer-stream.sh -s -m
+
+# 查看日志
+./docker-start-transfer-stream.sh -l
+
+# 停止服务
+./docker-start-transfer-stream.sh -S
+
+# 清理所有数据
+./docker-start-transfer-stream.sh -c
 ```
 
-### 导出代币转账
+## 环境变量配置
+
+### 必需配置
+
+在 `.env` 文件中设置以下参数：
 
 ```bash
-docker run -v $(pwd)/output:/output ethereum-etl:2.4.2 export_token_transfers \
-  --start-block 0 \
-  --end-block 1000000 \
-  --provider-uri https://mainnet.infura.io/v3/YOUR_PROJECT_ID \
-  --output /output/token_transfers.csv
+# Web3 提供者（必需）
+PROVIDER_URI=https://mainnet.infura.io/v3/YOUR_PROJECT_ID
+
+# 区块同步配置
+START_BLOCK=18000000
+PERIOD_SECONDS=10
+BATCH_SIZE=100
+MAX_WORKERS=5
+LAG=0
+
+# 文件路径
+OUTPUT_FILE=/app/data/transfer_transactions.csv
+LOG_FILE=/app/logs/transfer_stream.log
+PID_FILE=/app/state/transfer_stream.pid
+LAST_SYNCED_BLOCK_FILE=/app/state/last_synced_transfer_block.txt
+
+# 导出选项
+EXPORT_BLOCKS=false
+EXPORT_TRANSACTIONS=true
 ```
 
-## 使用Docker Compose
+### 配置说明
 
-### 1. 启动基础服务
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `PROVIDER_URI` | Web3提供者URI | `https://mainnet.infura.io` |
+| `START_BLOCK` | 开始区块号 | 最新区块 |
+| `PERIOD_SECONDS` | 同步间隔秒数 | `10` |
+| `BATCH_SIZE` | 批量大小 | `100` |
+| `MAX_WORKERS` | 最大工作线程 | `5` |
+| `LAG` | 滞后区块数 | `0` |
+| `OUTPUT_FILE` | 输出文件路径 | `/app/data/transfer_transactions.csv` |
+| `LOG_FILE` | 日志文件路径 | `/app/logs/transfer_stream.log` |
+| `PID_FILE` | PID文件路径 | `/app/state/transfer_stream.pid` |
+| `LAST_SYNCED_BLOCK_FILE` | 同步状态文件 | `/app/state/last_synced_transfer_block.txt` |
+| `EXPORT_BLOCKS` | 是否导出区块 | `false` |
+| `EXPORT_TRANSACTIONS` | 是否导出交易 | `true` |
 
-```bash
-docker-compose up -d ethereum-etl
+## 数据存储
+
+### 目录结构
+
+```
+ethereum-etl/
+├── data/                           # 数据输出目录
+│   └── transfer_transactions.csv   # 转账交易数据
+├── logs/                           # 日志目录
+│   └── transfer_stream.log         # 运行日志
+├── state/                          # 状态文件目录
+│   ├── transfer_stream.pid         # 进程ID文件
+│   └── last_synced_transfer_block.txt  # 最后同步区块
+└── config/                         # 配置文件目录
 ```
 
-### 2. 运行导出任务
+### 数据文件
+
+- **transfer_transactions.csv** - 转账交易数据文件
+- **transfer_stream.log** - 详细的运行日志
+- **last_synced_transfer_block.txt** - 记录最后同步的区块号
+
+## 监控和管理
+
+### 1. 查看服务状态
 
 ```bash
-docker-compose up ethereum-etl-export
+# 查看容器状态
+docker-compose -f docker-compose.simple.yml ps
+
+# 查看资源使用
+docker stats ethereum-etl-transfer-stream
+
+# 查看健康检查
+docker inspect ethereum-etl-transfer-stream | grep Health -A 10
 ```
 
-### 3. 启动流式处理
+### 2. 日志管理
 
 ```bash
-docker-compose up ethereum-etl-stream
+# 实时查看日志
+docker-compose -f docker-compose.simple.yml logs -f
+
+# 查看最近100行日志
+docker-compose -f docker-compose.simple.yml logs --tail=100
+
+# 查看错误日志
+docker-compose -f docker-compose.simple.yml logs | grep ERROR
 ```
 
-## 配置说明
-
-### 环境变量
-
-- `PYTHONUNBUFFERED=1`: 确保Python输出不被缓存
-- `PYTHONDONTWRITEBYTECODE=1`: 不生成.pyc文件
-
-### 卷挂载
-
-- `./output:/output`: 输出目录
-- `./config:/config`: 配置文件目录（可选）
-
-### 网络
-
-默认使用bridge网络，可以通过docker-compose.yml自定义。
-
-## 生产环境部署
-
-### 1. 使用特定版本标签
+### 3. 数据监控
 
 ```bash
-docker run ethereum-etl:2.4.2
+# 查看数据文件大小
+ls -lh data/transfer_transactions.csv
+
+# 查看最后同步的区块
+cat state/last_synced_transfer_block.txt
+
+# 查看数据行数
+wc -l data/transfer_transactions.csv
 ```
 
-### 2. 资源限制
+## 高级配置
+
+### 1. 使用完整版配置
 
 ```bash
-docker run --memory=2g --cpus=2 ethereum-etl:2.4.2
+# 使用完整版配置（包含监控服务）
+docker-compose -f docker-compose.transfer-stream.yml up -d
 ```
 
-### 3. 健康检查
-
-镜像包含健康检查，可以通过以下方式查看：
+### 2. 自定义配置
 
 ```bash
-docker inspect ethereum-etl:2.4.2 | grep Health -A 10
+# 创建自定义环境变量文件
+cp env.example my-config.env
+
+# 编辑配置
+vim my-config.env
+
+# 使用自定义配置启动
+docker-compose -f docker-compose.simple.yml --env-file my-config.env up -d
+```
+
+### 3. 数据库输出
+
+```bash
+# 在 .env 文件中设置数据库输出
+OUTPUT_FILE=postgresql+pg8000://user:pass@localhost/ethereum
+```
+
+### 4. 消息队列输出
+
+```bash
+# 在 .env 文件中设置Kafka输出
+OUTPUT_FILE=kafka/127.0.0.1:9092
 ```
 
 ## 故障排除
 
-### 1. 权限问题
+### 常见问题
 
-如果遇到权限问题，确保输出目录有正确的权限：
+1. **容器启动失败**
+   ```bash
+   # 查看详细错误信息
+   docker-compose -f docker-compose.simple.yml logs
+   
+   # 检查环境变量
+   docker-compose -f docker-compose.simple.yml config
+   ```
+
+2. **网络连接问题**
+   ```bash
+   # 检查网络连接
+   docker exec ethereum-etl-transfer-stream ping -c 3 mainnet.infura.io
+   
+   # 检查DNS解析
+   docker exec ethereum-etl-transfer-stream nslookup mainnet.infura.io
+   ```
+
+3. **磁盘空间不足**
+   ```bash
+   # 检查磁盘使用情况
+   df -h
+   
+   # 清理Docker缓存
+   docker system prune -f
+   ```
+
+4. **权限问题**
+   ```bash
+   # 检查目录权限
+   ls -la data/ logs/ state/
+   
+   # 修复权限
+   sudo chown -R $USER:$USER data/ logs/ state/
+   ```
+
+### 日志分析
 
 ```bash
-mkdir -p output
-chmod 755 output
-```
+# 查看启动日志
+docker-compose -f docker-compose.simple.yml logs transfer-stream
 
-### 2. 网络问题
+# 查看错误
+docker-compose -f docker-compose.simple.yml logs | grep -i error
 
-如果无法连接到以太坊节点，检查provider-uri是否正确：
-
-```bash
-# 测试连接
-docker run --rm ethereum-etl:2.4.2 python -c "
-from web3 import Web3
-w3 = Web3(Web3.HTTPProvider('https://mainnet.infura.io/v3/YOUR_PROJECT_ID'))
-print('Connected:', w3.isConnected())
-"
-```
-
-### 3. 内存不足
-
-如果遇到内存不足，增加Docker内存限制：
-
-```bash
-docker run --memory=4g ethereum-etl:2.4.2
+# 查看同步进度
+docker-compose -f docker-compose.simple.yml logs | grep "synced block"
 ```
 
 ## 性能优化
 
-### 1. 批量大小
+### 1. 资源限制
 
-根据可用内存调整batch-size：
+在 `docker-compose.simple.yml` 中添加资源限制：
 
-```bash
---batch-size 50  # 小内存
---batch-size 200 # 大内存
+```yaml
+services:
+  transfer-stream:
+    # ... 其他配置 ...
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
 ```
 
-### 2. 并发工作线程
+### 2. 存储优化
 
 ```bash
---max-workers 4  # 根据CPU核心数调整
+# 使用命名卷而不是绑定挂载
+volumes:
+  - transfer_data:/app/data
+  - transfer_logs:/app/logs
+  - transfer_state:/app/state
 ```
 
-### 3. 输出格式
-
-使用CSV格式比JSON更快：
+### 3. 网络优化
 
 ```bash
---output blocks.csv  # 更快
---output blocks.json # 更慢但更灵活
+# 使用自定义网络
+networks:
+  ethereum_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 ```
 
-## 监控和日志
+## 生产环境部署
 
-### 1. 查看容器日志
+### 1. 系统要求
+
+- Docker 20.10+
+- Docker Compose 2.0+
+- 至少 4GB RAM
+- 至少 100GB 可用磁盘空间
+- 稳定的网络连接
+
+### 2. 推荐配置
 
 ```bash
-docker logs ethereum-etl
+# 生产环境 .env 配置
+PROVIDER_URI=https://mainnet.infura.io/v3/YOUR_PROJECT_ID
+START_BLOCK=
+PERIOD_SECONDS=5
+BATCH_SIZE=100
+MAX_WORKERS=5
+LAG=10
+OUTPUT_FILE=/app/data/transfer_transactions.csv
+LOG_FILE=/app/logs/transfer_stream.log
+PID_FILE=/app/state/transfer_stream.pid
+LAST_SYNCED_BLOCK_FILE=/app/state/last_synced_transfer_block.txt
+EXPORT_BLOCKS=false
+EXPORT_TRANSACTIONS=true
 ```
 
-### 2. 实时监控
+### 3. 监控脚本
 
 ```bash
-docker stats ethereum-etl
+#!/bin/bash
+# 监控脚本示例
+if ! docker-compose -f docker-compose.simple.yml ps | grep -q "Up"; then
+    echo "Transfer stream service is down, restarting..."
+    docker-compose -f docker-compose.simple.yml restart
+fi
 ```
 
-### 3. 进入容器调试
+## 备份和恢复
+
+### 1. 数据备份
 
 ```bash
-docker exec -it ethereum-etl bash
+# 备份数据文件
+tar -czf transfer_data_backup_$(date +%Y%m%d).tar.gz data/ state/
+
+# 备份配置
+cp .env .env.backup.$(date +%Y%m%d)
 ```
 
-## 安全考虑
-
-1. 镜像使用非root用户运行
-2. 定期更新基础镜像
-3. 不要在容器中存储敏感信息
-4. 使用私有网络隔离容器
-
-## 支持的命令
-
-完整的命令列表可以通过以下方式查看：
+### 2. 数据恢复
 
 ```bash
-docker run --rm ethereum-etl:2.4.2 --help
+# 恢复数据
+tar -xzf transfer_data_backup_20231201.tar.gz
+
+# 恢复配置
+cp .env.backup.20231201 .env
 ```
 
-主要命令包括：
-- `export_all`: 导出所有数据
-- `export_blocks_and_transactions`: 导出区块和交易
-- `export_token_transfers`: 导出代币转账
-- `export_receipts_and_logs`: 导出收据和日志
-- `export_contracts`: 导出合约信息
-- `export_traces`: 导出交易追踪
-- `stream`: 流式处理
+## 总结
 
-## 版本信息
+Docker 部署提供了以下优势：
 
-- **Docker镜像版本**: 2.4.2
-- **Python版本**: 3.9-slim
-- **基础镜像**: python:3.9-slim
-- **Tini版本**: v0.19.0（仅生产版本）
+✅ **环境隔离** - 避免依赖冲突  
+✅ **易于部署** - 一键启动和停止  
+✅ **可移植性** - 在任何支持Docker的环境中运行  
+✅ **资源管理** - 精确控制资源使用  
+✅ **监控集成** - 内置健康检查和日志管理  
+✅ **扩展性** - 支持多实例部署  
 
-## 关于Tini
-
-Tini是一个轻量级的进程管理器，专门为Docker容器设计。在生产环境中使用Tini可以：
-
-1. **优雅关闭**：确保长时间运行的任务能够正确保存状态
-2. **信号处理**：正确处理SIGTERM等系统信号
-3. **进程清理**：自动清理僵尸进程，防止内存泄漏
-4. **稳定性**：提高容器运行的可靠性
-
-### 使用建议
-
-- **开发环境**：使用标准版本（Dockerfile）
-- **生产环境**：使用生产版本（Dockerfile.with-tini）
-- **替代方案**：可以使用 `docker run --init` 选项
-
-详细说明请参考 [TINI_EXPLANATION.md](TINI_EXPLANATION.md) 
+现在您可以轻松地在 Docker 环境中运行转账交易流式处理功能！ 

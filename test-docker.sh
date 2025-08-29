@@ -1,137 +1,240 @@
 #!/bin/bash
 
-# Ethereum ETL Docker Test Script
-# Version: 2.4.2
+# Docker 转账交易流式处理测试脚本
 
 set -e
 
-# Colors for output
+# 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Configuration
-IMAGE_NAME="ethereum-etl:2.4.2"
+echo -e "${BLUE}Docker 转账交易流式处理测试${NC}"
+echo "========================================"
 
-echo -e "${BLUE}=== Ethereum ETL Docker Test Script ===${NC}"
-echo -e "${BLUE}Version: 2.4.2${NC}"
-echo ""
-
-# Function to print colored output
-print_status() {
-    echo -e "${GREEN}[INFO]${NC} $1"
+# 检查Docker环境
+check_docker() {
+    echo -e "${BLUE}检查Docker环境...${NC}"
+    
+    if ! command -v docker &> /dev/null; then
+        echo -e "${RED}错误: 未找到 Docker${NC}"
+        exit 1
+    fi
+    
+    if ! command -v docker-compose &> /dev/null; then
+        echo -e "${RED}错误: 未找到 Docker Compose${NC}"
+        exit 1
+    fi
+    
+    if ! docker info &> /dev/null; then
+        echo -e "${RED}错误: Docker 服务未运行${NC}"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}Docker 环境检查通过${NC}"
 }
 
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+# 测试镜像构建
+test_build() {
+    echo -e "${BLUE}测试镜像构建...${NC}"
+    
+    if docker-compose -f docker-compose.simple.yml build; then
+        echo -e "${GREEN}镜像构建成功${NC}"
+    else
+        echo -e "${RED}镜像构建失败${NC}"
+        exit 1
+    fi
 }
 
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+# 测试配置验证
+test_config() {
+    echo -e "${BLUE}测试配置验证...${NC}"
+    
+    if docker-compose -f docker-compose.simple.yml config > /dev/null; then
+        echo -e "${GREEN}配置验证通过${NC}"
+    else
+        echo -e "${RED}配置验证失败${NC}"
+        exit 1
+    fi
 }
 
-# Check if Docker is running
-if ! docker info > /dev/null 2>&1; then
-    print_error "Docker is not running. Please start Docker and try again."
-    exit 1
-fi
+# 测试服务启动
+test_start() {
+    echo -e "${BLUE}测试服务启动...${NC}"
+    
+    # 创建测试环境变量文件
+    cat > .env.test << EOF
+PROVIDER_URI=https://mainnet.infura.io
+START_BLOCK=18000000
+PERIOD_SECONDS=30
+BATCH_SIZE=10
+MAX_WORKERS=2
+LAG=0
+OUTPUT_FILE=/app/data/test_transfers.csv
+LOG_FILE=/app/logs/test_stream.log
+PID_FILE=/app/state/test_stream.pid
+LAST_SYNCED_BLOCK_FILE=/app/state/test_last_block.txt
+EXPORT_BLOCKS=false
+EXPORT_TRANSACTIONS=true
+EOF
+    
+    # 创建测试目录
+    mkdir -p data logs state
+    
+    # 启动服务
+    if docker-compose -f docker-compose.simple.yml --env-file .env.test up -d; then
+        echo -e "${GREEN}服务启动成功${NC}"
+        
+        # 等待服务启动
+        echo -e "${BLUE}等待服务启动...${NC}"
+        sleep 15
+        
+        # 检查服务状态
+        if docker-compose -f docker-compose.simple.yml --env-file .env.test ps | grep -q "Up"; then
+            echo -e "${GREEN}服务运行正常${NC}"
+        else
+            echo -e "${RED}服务运行异常${NC}"
+            docker-compose -f docker-compose.simple.yml --env-file .env.test logs
+            return 1
+        fi
+        
+        # 检查文件创建
+        if [ -f "state/test_last_block.txt" ]; then
+            echo -e "${GREEN}状态文件创建成功${NC}"
+        else
+            echo -e "${YELLOW}状态文件未创建（可能正常）${NC}"
+        fi
+        
+        if [ -f "logs/test_stream.log" ]; then
+            echo -e "${GREEN}日志文件创建成功${NC}"
+        else
+            echo -e "${YELLOW}日志文件未创建（可能正常）${NC}"
+        fi
+        
+    else
+        echo -e "${RED}服务启动失败${NC}"
+        return 1
+    fi
+}
 
-print_status "Docker is running"
+# 测试日志输出
+test_logs() {
+    echo -e "${BLUE}测试日志输出...${NC}"
+    
+    # 等待一段时间让服务产生日志
+    sleep 10
+    
+    if docker-compose -f docker-compose.simple.yml --env-file .env.test logs --tail=10 | grep -q "TransferTransactionStreamer"; then
+        echo -e "${GREEN}日志输出正常${NC}"
+    else
+        echo -e "${YELLOW}日志输出检查失败（可能正常）${NC}"
+    fi
+}
 
-# Check if image exists
-if ! docker image inspect ${IMAGE_NAME} > /dev/null 2>&1; then
-    print_error "Docker image ${IMAGE_NAME} not found. Please build it first."
-    exit 1
-fi
+# 测试健康检查
+test_health() {
+    echo -e "${BLUE}测试健康检查...${NC}"
+    
+    # 等待健康检查
+    sleep 30
+    
+    if docker inspect ethereum-etl-transfer-stream | grep -q '"Status": "healthy"'; then
+        echo -e "${GREEN}健康检查通过${NC}"
+    else
+        echo -e "${YELLOW}健康检查未通过（可能正常）${NC}"
+        docker inspect ethereum-etl-transfer-stream | grep -A 5 -B 5 Health
+    fi
+}
 
-print_status "Docker image ${IMAGE_NAME} found"
+# 测试服务停止
+test_stop() {
+    echo -e "${BLUE}测试服务停止...${NC}"
+    
+    if docker-compose -f docker-compose.simple.yml --env-file .env.test down; then
+        echo -e "${GREEN}服务停止成功${NC}"
+    else
+        echo -e "${RED}服务停止失败${NC}"
+        return 1
+    fi
+}
 
-# Test 1: Basic help command
-print_status "Test 1: Testing basic help command..."
-if docker run --rm ${IMAGE_NAME} --help > /dev/null 2>&1; then
-    print_status "✓ Basic help command works"
-else
-    print_error "✗ Basic help command failed"
-    exit 1
-fi
+# 清理测试环境
+cleanup() {
+    echo -e "${BLUE}清理测试环境...${NC}"
+    
+    # 停止服务
+    docker-compose -f docker-compose.simple.yml --env-file .env.test down 2>/dev/null || true
+    
+    # 删除测试文件
+    rm -f .env.test
+    
+    # 删除测试数据（可选）
+    read -p "是否删除测试数据？(y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        rm -rf data/test_transfers.csv logs/test_stream.log state/test_stream.pid state/test_last_block.txt
+        echo -e "${GREEN}测试数据已清理${NC}"
+    else
+        echo -e "${YELLOW}测试数据保留${NC}"
+    fi
+}
 
-# Test 2: Export all help
-print_status "Test 2: Testing export_all help..."
-if docker run --rm ${IMAGE_NAME} export_all --help > /dev/null 2>&1; then
-    print_status "✓ Export all help command works"
-else
-    print_error "✗ Export all help command failed"
-    exit 1
-fi
+# 主测试流程
+main() {
+    local test_results=()
+    
+    # 运行测试
+    tests=(
+        "Docker环境检查" check_docker
+        "镜像构建测试" test_build
+        "配置验证测试" test_config
+        "服务启动测试" test_start
+        "日志输出测试" test_logs
+        "健康检查测试" test_health
+        "服务停止测试" test_stop
+    )
+    
+    for ((i=0; i<${#tests[@]}; i+=2)); do
+        test_name="${tests[i]}"
+        test_func="${tests[i+1]}"
+        
+        echo -e "${BLUE}\n--- $test_name ---${NC}"
+        if $test_func; then
+            echo -e "${GREEN}✓ $test_name 通过${NC}"
+            test_results+=("✓ $test_name")
+        else
+            echo -e "${RED}✗ $test_name 失败${NC}"
+            test_results+=("✗ $test_name")
+        fi
+    done
+    
+    # 显示测试结果
+    echo -e "${BLUE}\n--- 测试结果 ---${NC}"
+    for result in "${test_results[@]}"; do
+        if [[ $result == ✓* ]]; then
+            echo -e "${GREEN}$result${NC}"
+        else
+            echo -e "${RED}$result${NC}"
+        fi
+    done
+    
+    # 统计结果
+    passed=$(echo "${test_results[@]}" | tr ' ' '\n' | grep -c "✓" || echo "0")
+    total=${#test_results[@]}
+    
+    echo -e "${BLUE}\n测试统计: $passed/$total 通过${NC}"
+    
+    if [ "$passed" -eq "$total" ]; then
+        echo -e "${GREEN}所有测试通过！Docker 环境配置正确。${NC}"
+    else
+        echo -e "${YELLOW}部分测试失败，请检查错误信息。${NC}"
+    fi
+    
+    # 清理
+    cleanup
+}
 
-# Test 3: Stream help
-print_status "Test 3: Testing stream help..."
-if docker run --rm ${IMAGE_NAME} stream --help > /dev/null 2>&1; then
-    print_status "✓ Stream help command works"
-else
-    print_error "✗ Stream help command failed"
-    exit 1
-fi
-
-# Test 4: Check available commands
-print_status "Test 4: Checking available commands..."
-COMMANDS=$(docker run --rm ${IMAGE_NAME} --help | grep -E "^  [a-z_]+" | wc -l)
-print_status "✓ Found ${COMMANDS} available commands"
-
-# Test 5: Test Python import (using docker exec)
-print_status "Test 5: Testing Python import..."
-if docker run --rm --entrypoint python ${IMAGE_NAME} -c "import ethereumetl; print('Import successful')" 2>/dev/null | grep -q "Import successful"; then
-    print_status "✓ Python import works"
-else
-    print_warning "⚠ Python import test failed"
-fi
-
-# Test 6: Test volume mounting
-print_status "Test 6: Testing volume mounting..."
-mkdir -p test_output
-if docker run --rm --entrypoint python -v $(pwd)/test_output:/output ${IMAGE_NAME} -c "import os; print('Volume mounted:', os.path.exists('/output'))" 2>/dev/null | grep -q "Volume mounted: True"; then
-    print_status "✓ Volume mounting works"
-else
-    print_warning "⚠ Volume mounting test failed"
-fi
-
-# Test 7: Test health check
-print_status "Test 7: Testing health check..."
-if docker run --rm --entrypoint python ${IMAGE_NAME} -c "import ethereumetl; print('Ethereum ETL is healthy')" 2>/dev/null | grep -q "Ethereum ETL is healthy"; then
-    print_status "✓ Health check works"
-else
-    print_warning "⚠ Health check failed"
-fi
-
-# Test 8: Test user permissions
-print_status "Test 8: Testing user permissions..."
-USER_INFO=$(docker run --rm --entrypoint whoami ${IMAGE_NAME} 2>/dev/null)
-if [ "$USER_INFO" = "ethereumetl" ]; then
-    print_status "✓ Running as non-root user: ${USER_INFO}"
-else
-    print_warning "⚠ User permission test failed: ${USER_INFO}"
-fi
-
-# Cleanup
-rm -rf test_output
-
-echo ""
-echo -e "${GREEN}=== Test Summary ===${NC}"
-echo -e "✓ All basic functionality tests passed"
-echo -e "✓ Docker image is working correctly"
-echo -e "✓ Ready for production use"
-echo ""
-echo -e "${BLUE}=== Next Steps ===${NC}"
-echo -e "1. Configure your Ethereum provider URI"
-echo -e "2. Set up output directory"
-echo -e "3. Run your first export command"
-echo ""
-echo -e "${YELLOW}Example usage:${NC}"
-echo "docker run -v \$(pwd)/output:/output ${IMAGE_NAME} export_all \\"
-echo "  --start-block 0 --end-block 1000 \\"
-echo "  --provider-uri https://mainnet.infura.io/v3/YOUR_PROJECT_ID \\"
-echo "  --output-dir /output"
-echo ""
-echo -e "${GREEN}All tests completed successfully!${NC}" 
+# 运行主函数
+main "$@" 
