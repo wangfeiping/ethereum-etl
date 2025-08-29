@@ -25,6 +25,7 @@ import logging
 import os
 import time
 import json
+import threading
 from datetime import datetime
 
 from ethereumetl.jobs.export_transfer_transactions_job import ExportTransferTransactionsJob
@@ -33,6 +34,15 @@ from ethereumetl.thread_local_proxy import ThreadLocalProxy
 from ethereumetl.web3_utils import build_web3
 from blockchainetl.logging_utils import logging_basic_config
 from blockchainetl.file_utils import smart_open
+
+# Prometheus 相关导入
+try:
+    from prometheus_client import start_http_server, Gauge, Counter, Histogram, Info
+    PROMETHEUS_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_AVAILABLE = False
+    print("警告: prometheus_client 未安装，Prometheus 指标将被禁用")
+    print("安装命令: pip install prometheus_client")
 
 
 class TransferTransactionStreamer:
@@ -52,7 +62,8 @@ class TransferTransactionStreamer:
             max_workers=5,
             export_blocks=False,
             export_transactions=True,
-            pid_file=None):
+            pid_file=None,
+            prometheus_port=8000):
         
         self.provider_uri = provider_uri
         self.transfer_transactions_output = transfer_transactions_output
@@ -65,6 +76,7 @@ class TransferTransactionStreamer:
         self.export_blocks = export_blocks
         self.export_transactions = export_transactions
         self.pid_file = pid_file
+        self.prometheus_port = prometheus_port
         
         # 初始化Web3提供者
         self.batch_web3_provider = ThreadLocalProxy(lambda: get_provider_from_uri(provider_uri, batch=True))
@@ -72,11 +84,123 @@ class TransferTransactionStreamer:
         # 初始化日志
         self.logger = logging.getLogger('TransferTransactionStreamer')
         
+        # 初始化 Prometheus 指标
+        self._init_prometheus_metrics()
+        
         # 初始化同步状态
         if self.start_block is not None or not os.path.isfile(self.last_synced_block_file):
             self._init_last_synced_block_file((self.start_block or 0) - 1)
         
         self.last_synced_block = self._read_last_synced_block()
+        
+        # 启动 Prometheus 服务器
+        self._start_prometheus_server()
+        
+    def _init_prometheus_metrics(self):
+        """初始化 Prometheus 指标"""
+        if not PROMETHEUS_AVAILABLE:
+            self.logger.warning("Prometheus 客户端未安装，指标将被禁用")
+            return
+            
+        # 同步高度指标
+        self.synced_height = Gauge(
+            'ethereum_etl_synced_height',
+            '已完成解析的区块高度',
+            ['network', 'provider']
+        )
+        
+        # 处理区块数量指标
+        self.blocks_processed_total = Counter(
+            'ethereum_etl_blocks_processed_total',
+            '已处理的区块总数',
+            ['network', 'provider']
+        )
+        
+        # 处理交易数量指标
+        self.transactions_processed_total = Counter(
+            'ethereum_etl_transactions_processed_total',
+            '已处理的交易总数',
+            ['network', 'provider']
+        )
+        
+        # 转账交易数量指标
+        self.transfer_transactions_total = Counter(
+            'ethereum_etl_transfer_transactions_total',
+            '已处理的转账交易总数',
+            ['network', 'provider']
+        )
+        
+        # 处理时间指标
+        self.processing_duration_seconds = Histogram(
+            'ethereum_etl_processing_duration_seconds',
+            '处理时间（秒）',
+            ['network', 'provider', 'operation']
+        )
+        
+        # 错误计数指标
+        self.errors_total = Counter(
+            'ethereum_etl_errors_total',
+            '错误总数',
+            ['network', 'provider', 'error_type']
+        )
+        
+        # 应用信息指标
+        self.app_info = Info(
+            'ethereum_etl_app',
+            '应用信息'
+        )
+        self.app_info.info({
+            'version': '1.0.0',
+            'component': 'transfer_streamer'
+        })
+        
+        self.logger.info("Prometheus 指标初始化完成")
+        
+    def _start_prometheus_server(self):
+        """启动 Prometheus HTTP 服务器"""
+        if not PROMETHEUS_AVAILABLE:
+            return
+            
+        def start_server():
+            try:
+                start_http_server(self.prometheus_port)
+                self.logger.info(f"Prometheus 指标服务器启动在端口 {self.prometheus_port}")
+            except Exception as e:
+                self.logger.error(f"启动 Prometheus 服务器失败: {e}")
+                
+        # 在后台线程中启动服务器
+        server_thread = threading.Thread(target=start_server, daemon=True)
+        server_thread.start()
+        
+    def _update_synced_height_metric(self, block_number):
+        """更新同步高度指标"""
+        if not PROMETHEUS_AVAILABLE:
+            return
+            
+        try:
+            # 从 provider_uri 提取网络信息
+            network = "mainnet"  # 默认值
+            if "goerli" in self.provider_uri:
+                network = "goerli"
+            elif "sepolia" in self.provider_uri:
+                network = "sepolia"
+            elif "polygon" in self.provider_uri:
+                network = "polygon"
+            elif "bsc" in self.provider_uri:
+                network = "bsc"
+                
+            provider = "infura"  # 默认值
+            if "alchemy" in self.provider_uri:
+                provider = "alchemy"
+            elif "quicknode" in self.provider_uri:
+                provider = "quicknode"
+            elif "local" in self.provider_uri:
+                provider = "local"
+                
+            self.synced_height.labels(network=network, provider=provider).set(block_number)
+            self.logger.debug(f"更新同步高度指标: {block_number}")
+        except Exception as e:
+            self.logger.error(f"更新同步高度指标失败: {e}")
         
     def _init_last_synced_block_file(self, start_block):
         """初始化最后同步区块文件"""
@@ -106,18 +230,93 @@ class TransferTransactionStreamer:
         """导出指定区块范围内的转账交易"""
         self.logger.info(f"导出区块 {start_block} 到 {end_block} 的转账交易")
         
-        job = ExportTransferTransactionsJob(
-            start_block=start_block,
-            end_block=end_block,
-            batch_size=self.batch_size,
-            batch_web3_provider=self.batch_web3_provider,
-            max_workers=self.max_workers,
-            transfer_transactions_output=self.transfer_transactions_output,
-            export_blocks=self.export_blocks,
-            export_transactions=self.export_transactions
-        )
+        start_time = time.time()
         
-        job.run()
+        try:
+            job = ExportTransferTransactionsJob(
+                start_block=start_block,
+                end_block=end_block,
+                batch_size=self.batch_size,
+                batch_web3_provider=self.batch_web3_provider,
+                max_workers=self.max_workers,
+                transfer_transactions_output=self.transfer_transactions_output,
+                export_blocks=self.export_blocks,
+                export_transactions=self.export_transactions
+            )
+            
+            job.run()
+            
+            # 更新指标
+            processing_time = time.time() - start_time
+            blocks_processed = end_block - start_block + 1
+            
+            if PROMETHEUS_AVAILABLE:
+                try:
+                    # 从 provider_uri 提取网络和提供者信息
+                    network = "mainnet"
+                    if "goerli" in self.provider_uri:
+                        network = "goerli"
+                    elif "sepolia" in self.provider_uri:
+                        network = "sepolia"
+                    elif "polygon" in self.provider_uri:
+                        network = "polygon"
+                    elif "bsc" in self.provider_uri:
+                        network = "bsc"
+                        
+                    provider = "infura"
+                    if "alchemy" in self.provider_uri:
+                        provider = "alchemy"
+                    elif "quicknode" in self.provider_uri:
+                        provider = "quicknode"
+                    elif "local" in self.provider_uri:
+                        provider = "local"
+                    
+                    # 更新处理区块数量
+                    self.blocks_processed_total.labels(network=network, provider=provider).inc(blocks_processed)
+                    
+                    # 更新处理时间
+                    self.processing_duration_seconds.labels(
+                        network=network, 
+                        provider=provider, 
+                        operation="export_transfer_transactions"
+                    ).observe(processing_time)
+                    
+                    self.logger.debug(f"更新指标: 处理了 {blocks_processed} 个区块，耗时 {processing_time:.2f} 秒")
+                    
+                except Exception as e:
+                    self.logger.error(f"更新 Prometheus 指标失败: {e}")
+                    
+        except Exception as e:
+            # 记录错误指标
+            if PROMETHEUS_AVAILABLE:
+                try:
+                    network = "mainnet"
+                    provider = "infura"
+                    if "goerli" in self.provider_uri:
+                        network = "goerli"
+                    elif "sepolia" in self.provider_uri:
+                        network = "sepolia"
+                    elif "polygon" in self.provider_uri:
+                        network = "polygon"
+                    elif "bsc" in self.provider_uri:
+                        network = "bsc"
+                        
+                    if "alchemy" in self.provider_uri:
+                        provider = "alchemy"
+                    elif "quicknode" in self.provider_uri:
+                        provider = "quicknode"
+                    elif "local" in self.provider_uri:
+                        provider = "local"
+                        
+                    self.errors_total.labels(
+                        network=network, 
+                        provider=provider, 
+                        error_type="export_failed"
+                    ).inc()
+                except Exception as metric_error:
+                    self.logger.error(f"记录错误指标失败: {metric_error}")
+                    
+            raise e
         
     def _sync_cycle(self):
         """执行一次同步周期"""
@@ -140,6 +339,10 @@ class TransferTransactionStreamer:
                 self.logger.info(f'写入最后同步区块: {target_block}')
                 self._write_last_synced_block(target_block)
                 self.last_synced_block = target_block
+                
+                # 更新同步高度指标
+                self._update_synced_height_metric(target_block)
+                
                 return blocks_to_sync
             except Exception as e:
                 self.logger.error(f'导出转账交易时发生错误: {e}')
@@ -207,10 +410,12 @@ class TransferTransactionStreamer:
               help='日志文件')
 @click.option('--pid-file', default=None, show_default=True, type=str, 
               help='PID文件')
+@click.option('--prometheus-port', default=8000, show_default=True, type=int,
+              help='Prometheus 指标服务器端口')
 def stream_transfer_transactions(
         last_synced_block_file, lag, provider_uri, transfer_transactions_output,
         start_block, period_seconds, batch_size, max_workers,
-        export_blocks, export_transactions, log_file, pid_file):
+        export_blocks, export_transactions, log_file, pid_file, prometheus_port):
     """持续流式导出转账交易（value > 0的交易）"""
     
     # 配置日志
@@ -244,7 +449,8 @@ def stream_transfer_transactions(
         max_workers=max_workers,
         export_blocks=export_blocks,
         export_transactions=export_transactions,
-        pid_file=pid_file
+        pid_file=pid_file,
+        prometheus_port=prometheus_port
     )
     
     # 开始流式处理
