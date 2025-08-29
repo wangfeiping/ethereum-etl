@@ -44,6 +44,7 @@ from ethereumetl.cli.filter_items import filter_items
 from ethereumetl.cli.get_block_range_for_date import get_block_range_for_date
 from ethereumetl.cli.get_block_range_for_timestamps import get_block_range_for_timestamps
 from ethereumetl.cli.get_keccak_hash import get_keccak_hash
+from ethereumetl.cli.export_transfer_transactions import export_transfer_transactions
 from ethereumetl.cli.stream import stream
 
 
@@ -65,6 +66,7 @@ cli.add_command(export_contracts, "export_contracts")
 cli.add_command(export_tokens, "export_tokens")
 cli.add_command(export_traces, "export_traces")
 cli.add_command(export_geth_traces, "export_geth_traces")
+cli.add_command(export_transfer_transactions, "export_transfer_transactions")
 cli.add_command(extract_geth_traces, "extract_geth_traces")
 cli.add_command(extract_contracts, "extract_contracts")
 cli.add_command(extract_tokens, "extract_tokens")
