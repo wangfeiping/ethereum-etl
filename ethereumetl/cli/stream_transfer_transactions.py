@@ -412,16 +412,18 @@ class TransferTransactionStreamer:
               help='PID文件')
 @click.option('--prometheus-port', default=8000, show_default=True, type=int,
               help='Prometheus 指标服务器端口')
+@click.option('--log-level', default='WARNING', show_default=True, type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
+              help='日志级别')
 def stream_transfer_transactions(
         last_synced_block_file, lag, provider_uri, transfer_transactions_output,
         start_block, period_seconds, batch_size, max_workers,
-        export_blocks, export_transactions, log_file, pid_file, prometheus_port):
+        export_blocks, export_transactions, log_file, pid_file, prometheus_port, log_level):
     """持续流式导出转账交易（value > 0的交易）"""
     
     # 配置日志
     if log_file:
         logging.basicConfig(
-            level=logging.INFO,
+            level=getattr(logging, log_level),
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler(log_file),
@@ -429,7 +431,11 @@ def stream_transfer_transactions(
             ]
         )
     else:
-        logging_basic_config()
+        # 设置日志级别
+        logging.basicConfig(
+            level=getattr(logging, log_level),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
     
     if not export_blocks and not export_transactions:
         raise ValueError('export_blocks 和 export_transactions 至少有一个必须为 True')

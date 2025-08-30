@@ -29,7 +29,7 @@ from ethereumetl.json_rpc_requests import generate_get_block_by_number_json_rpc
 from ethereumetl.mappers.block_mapper import EthBlockMapper
 from ethereumetl.mappers.transaction_mapper import EthTransactionMapper
 from ethereumetl.utils import rpc_response_batch_to_results, validate_range
-from ethereumetl.jobs.exporters.transfer_transactions_exporter import transfer_transactions_item_exporter
+from ethereumetl.jobs.exporters.transfer_transactions_exporter import TransferTransactionsItemExporter
 
 
 class ExportTransferTransactionsJob(BaseJob):
@@ -55,7 +55,7 @@ class ExportTransferTransactionsJob(BaseJob):
         self.batch_work_executor = BatchWorkExecutor(batch_size, max_workers)
         
         # 使用自定义的转账交易导出器
-        self.item_exporter = transfer_transactions_item_exporter(
+        self.item_exporter = TransferTransactionsItemExporter(
             transfer_transactions_output=transfer_transactions_output
         )
 
@@ -96,11 +96,16 @@ class ExportTransferTransactionsJob(BaseJob):
         if self.export_transactions:
             transfer_count = 0
             for tx in block.transactions:
-                # 检查是否为转账交易
-                if tx.value and tx.value != 0:
+                # 将交易转换为字典格式，这样TransferTransactionConverter可以处理
+                tx_dict = self.transaction_mapper.transaction_to_dict(tx)
+                self.item_exporter.export_item(tx_dict)
+                
+                # 检查是否为转账交易（ETH转账或ERC20转账）
+                is_eth_transfer = tx.value and tx.value != 0
+                is_erc20_transfer = tx.input and tx.input.startswith('0xa9059cbb')
+                
+                if is_eth_transfer or is_erc20_transfer:
                     transfer_count += 1
-                    
-                self.item_exporter.export_item(self.transaction_mapper.transaction_to_dict(tx))
             
             if transfer_count > 0:
                 self.logger.info(f"Block {block.number}: Found {transfer_count} transfer transactions out of {len(block.transactions)} total transactions")

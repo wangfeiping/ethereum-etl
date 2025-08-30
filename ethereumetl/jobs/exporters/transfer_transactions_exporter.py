@@ -34,20 +34,59 @@ class TransferTransactionConverter:
         self.logger = logging.getLogger('TransferTransactionConverter')
         self.transfer_count = 0
         
+        # ERC20 transfer method signature: transfer(address,uint256)
+        self.ERC20_TRANSFER_SIGNATURE = "a9059cbb"
+        
+    def _is_erc20_transfer(self, input_data):
+        """检查是否为ERC20转账交易"""
+        if not input_data or input_data == "0x":
+            return False
+        # 移除0x前缀并检查前4个字节是否为ERC20 transfer方法签名
+        input_hex = input_data[2:] if input_data.startswith("0x") else input_data
+        return input_hex.startswith(self.ERC20_TRANSFER_SIGNATURE)
+        
+    def _is_eth_transfer(self, input_data, value):
+        """检查是否为ETH转账交易"""
+        # ETH转账：input为空或0x，且value大于0
+        return (not input_data or input_data == "0x") and value and value != '0' and value != 0
+        
     def convert_item(self, item):
         # 只处理交易类型的项目
         if item.get('type') != 'transaction':
             return item
             
-        # 检查是否为转账交易（有value字段且不为0）
+        # 检查是否为转账交易
         value = item.get('value', '0')
-        if value and value != '0' and value != 0:
+        input_data = item.get('input', '')
+        
+        # 判断是否为转账交易：
+        # 1. ETH转账：value > 0 且 input为空或0x
+        # 2. ERC20转账：input包含ERC20 transfer方法签名
+        is_eth_transfer = self._is_eth_transfer(input_data, value)
+        is_erc20_transfer = self._is_erc20_transfer(input_data)
+        
+        if is_eth_transfer or is_erc20_transfer:
             # 这是一个转账交易
             block_number = item.get('block_number', 'unknown')
             transaction_hash = item.get('hash', 'unknown')
+            from_address = item.get('from_address', 'unknown')
+            to_address = item.get('to_address', 'unknown')
             
-            # 输出日志
-            self.logger.info(f"Transfer Transaction Found - Block: {block_number}, Hash: {transaction_hash}")
+            # 判断转账类型
+            if is_erc20_transfer:
+                # ERC20转账
+                contract_address = to_address  # ERC20转账的目标地址就是合约地址
+                self.logger.warning(f"ERC20 Transfer - Block: {block_number}, Hash: {transaction_hash}, "
+                               f"From: {from_address}, To: {to_address}, Contract: {contract_address}")
+            elif is_eth_transfer:
+                # ETH转账
+                self.logger.warning(f"ETH Transfer - Block: {block_number}, Hash: {transaction_hash}, "
+                               f"From: {from_address}, To: {to_address}, Type: ETH")
+            else:
+                # 其他类型的转账（可能是合约调用等）
+                self.logger.warning(f"Other Transfer - Block: {block_number}, Hash: {transaction_hash}, "
+                               f"From: {from_address}, To: {to_address}")
+            
             self.transfer_count += 1
             
             # 每1000个转账交易输出一次统计
@@ -115,9 +154,20 @@ class TransferTransactionsItemExporter:
     def export_item(self, item):
         # 只处理交易类型的项目
         if item.get('type') == 'transaction':
+            # 首先通过TransferTransactionConverter处理，这会输出日志
+            converted_item = self.transfer_converter.convert_item(item)
+            
             # 检查是否为转账交易
             value = item.get('value', '0')
-            if value and value != '0' and value != 0:
+            input_data = item.get('input', '')
+            
+            # 判断是否为转账交易：
+            # 1. ETH转账：value > 0 且 input为空或0x
+            # 2. ERC20转账：input包含ERC20 transfer方法签名
+            is_eth_transfer = self.transfer_converter._is_eth_transfer(input_data, value)
+            is_erc20_transfer = self.transfer_converter._is_erc20_transfer(input_data)
+            
+            if is_eth_transfer or is_erc20_transfer:
                 # 转换为转账交易类型并导出
                 transfer_item = item.copy()
                 transfer_item['type'] = 'transfer_transaction'
