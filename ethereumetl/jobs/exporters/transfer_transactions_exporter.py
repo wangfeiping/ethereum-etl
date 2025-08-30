@@ -44,6 +44,50 @@ class TransferTransactionConverter:
         # 移除0x前缀并检查前4个字节是否为ERC20 transfer方法签名
         input_hex = input_data[2:] if input_data.startswith("0x") else input_data
         return input_hex.startswith(self.ERC20_TRANSFER_SIGNATURE)
+    
+    def _parse_erc20_transfer_data(self, input_data):
+        """解析ERC20转账数据，提取接收地址和转账金额"""
+        if not input_data or input_data == "0x":
+            return None, None
+            
+        # 移除0x前缀
+        input_hex = input_data[2:] if input_data.startswith("0x") else input_data
+        
+        # 检查是否为ERC20 transfer方法
+        if not input_hex.startswith(self.ERC20_TRANSFER_SIGNATURE):
+            return None, None
+            
+        # ERC20 transfer(address,uint256) 方法签名后跟两个32字节参数
+        # 方法签名: 4字节 (a9059cbb)
+        # 接收地址: 32字节 (去掉前导零)
+        # 转账金额: 32字节
+        
+        if len(input_hex) < 4 + 64 + 64:  # 4字节签名 + 64字节地址 + 64字节金额
+            return None, None
+            
+        # 提取接收地址 (跳过4字节方法签名)
+        address_hex = input_hex[8:8+64]  # 8个十六进制字符 = 4字节方法签名
+        # 去掉前导零，取最后40个字符作为地址
+        address_clean = address_hex.lstrip('0')
+        if len(address_clean) < 40:
+            address_final = '0' * (40 - len(address_clean)) + address_clean
+        elif len(address_clean) > 40:
+            address_final = address_clean[-40:]  # 取最后40个字符
+        else:
+            address_final = address_clean
+            
+        # 添加0x前缀
+        recipient_address = "0x" + address_final
+        
+        # 提取转账金额 (跳过4字节方法签名 + 64字节地址)
+        amount_hex = input_hex[8+64:8+64+64]  # 8+64 = 72个十六进制字符
+        # 转换为十进制
+        try:
+            amount = int(amount_hex, 16)
+        except ValueError:
+            amount = 0
+            
+        return recipient_address, amount
         
     def _is_eth_transfer(self, input_data, value):
         """检查是否为ETH转账交易"""
@@ -74,10 +118,17 @@ class TransferTransactionConverter:
             
             # 判断转账类型
             if is_erc20_transfer:
-                # ERC20转账
-                contract_address = to_address  # ERC20转账的目标地址就是合约地址
-                self.logger.warning(f"ERC20 Transfer - Block: {block_number}, Hash: {transaction_hash}, "
-                               f"From: {from_address}, To: {to_address}, Contract: {contract_address}")
+                # ERC20转账 - 从input_data解析真正的接收地址
+                contract_address = to_address  # to_address是合约地址
+                recipient_address, token_amount = self._parse_erc20_transfer_data(input_data)
+                
+                if recipient_address:
+                    self.logger.warning(f"ERC20 Transfer - Block: {block_number}, Hash: {transaction_hash}, "
+                                   f"From: {from_address}, To: {recipient_address}, Contract: {contract_address}, Amount: {token_amount}")
+                else:
+                    # 解析失败，使用原始数据
+                    self.logger.warning(f"ERC20 Transfer (Parse Failed) - Block: {block_number}, Hash: {transaction_hash}, "
+                                   f"From: {from_address}, To: {to_address}, Contract: {contract_address}")
             elif is_eth_transfer:
                 # ETH转账
                 self.logger.warning(f"ETH Transfer - Block: {block_number}, Hash: {transaction_hash}, "
