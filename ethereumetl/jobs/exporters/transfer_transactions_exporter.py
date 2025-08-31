@@ -97,7 +97,7 @@ class TransferTransactionConverter:
     def convert_item(self, item):
         # 只处理交易类型的项目
         if item.get('type') != 'transaction':
-            return item
+            return None
             
         # 检查是否为转账交易
         value = item.get('value', '0')
@@ -109,42 +109,49 @@ class TransferTransactionConverter:
         is_eth_transfer = self._is_eth_transfer(input_data, value)
         is_erc20_transfer = self._is_erc20_transfer(input_data)
         
-        if is_eth_transfer or is_erc20_transfer:
-            # 这是一个转账交易
+        # 判断转账类型
+        if is_erc20_transfer:
+            # ERC20转账交易
             block_number = item.get('block_number', 'unknown')
             transaction_hash = item.get('hash', 'unknown')
-            from_address = item.get('from_address', 'unknown')
-            to_address = item.get('to_address', 'unknown')
+
+            # ERC20转账 - 从input_data解析真正的接收地址
+            recipient_address, token_amount = self._parse_erc20_transfer_data(input_data)
             
-            # 判断转账类型
-            if is_erc20_transfer:
-                # ERC20转账 - 从input_data解析真正的接收地址
-                contract_address = to_address  # to_address是合约地址
-                recipient_address, token_amount = self._parse_erc20_transfer_data(input_data)
-                
-                if recipient_address:
-                    self.logger.warning(f"ERC20 Transfer - Block: {block_number}, Hash: {transaction_hash}, "
-                                   f"From: {from_address}, To: {recipient_address}, Contract: {contract_address}, Amount: {token_amount}")
-                else:
-                    # 解析失败，使用原始数据
-                    self.logger.warning(f"ERC20 Transfer (Parse Failed) - Block: {block_number}, Hash: {transaction_hash}, "
-                                   f"From: {from_address}, To: {to_address}, Contract: {contract_address}")
-            elif is_eth_transfer:
-                # ETH转账
-                self.logger.warning(f"ETH Transfer - Block: {block_number}, Hash: {transaction_hash}, "
-                               f"From: {from_address}, To: {to_address}, Type: ETH")
+            if recipient_address:
+                ret_item = {
+                    'type': 'erc20',
+                    'height': block_number,
+                    'hash': transaction_hash,
+                    'from': item.get('from_address', 'unknown'),
+                    'contract': item.get('to_address', 'unknown'),
+                    'to': recipient_address,
+                }
             else:
-                # 其他类型的转账（可能是合约调用等）
-                self.logger.warning(f"Other Transfer - Block: {block_number}, Hash: {transaction_hash}, "
-                               f"From: {from_address}, To: {to_address}")
-            
-            self.transfer_count += 1
-            
-            # 每1000个转账交易输出一次统计
-            if self.transfer_count % 1000 == 0:
-                self.logger.info(f"Total transfer transactions processed: {self.transfer_count}")
+                # 解析失败，使用原始数据
+                self.logger.error(f"ERC20 Transfer (Parse Failed) - Block: {block_number}, Hash: {transaction_hash}")
+                return None
+        elif is_eth_transfer:
+            # ETH转账交易
+            ret_item = {
+                'type': 'eth',
+                'height': item.get('block_number', 'unknown'),
+                'hash': item.get('hash', 'unknown'),
+                'from': item.get('from_address', 'unknown'),
+                'contract': 'eth',
+                'to': item.get('to_address', 'unknown'),
+            }
+        else:
+            # 其他类型的转账（可能是合约调用等）
+            return None
         
-        return item
+        self.transfer_count += 1
+        
+        # 每1000个转账交易输出一次统计
+        if self.transfer_count % 1000 == 0:
+            self.logger.info(f"Total transfer transactions processed: {self.transfer_count}")
+        
+        return ret_item
 
 
 class TransferTransactionsItemExporter:
@@ -208,24 +215,41 @@ class TransferTransactionsItemExporter:
             # 首先通过TransferTransactionConverter处理，这会输出日志
             converted_item = self.transfer_converter.convert_item(item)
             
-            # 检查是否为转账交易
-            value = item.get('value', '0')
-            input_data = item.get('input', '')
+            # # 检查是否为转账交易
+            # value = item.get('value', '0')
+            # input_data = item.get('input', '')
             
-            # 判断是否为转账交易：
-            # 1. ETH转账：value > 0 且 input为空或0x
-            # 2. ERC20转账：input包含ERC20 transfer方法签名
-            is_eth_transfer = self.transfer_converter._is_eth_transfer(input_data, value)
-            is_erc20_transfer = self.transfer_converter._is_erc20_transfer(input_data)
+            # # 判断是否为转账交易：
+            # # 1. ETH转账：value > 0 且 input为空或0x
+            # # 2. ERC20转账：input包含ERC20 transfer方法签名
+            # is_eth_transfer = self.transfer_converter._is_eth_transfer(input_data, value)
+            # is_erc20_transfer = self.transfer_converter._is_erc20_transfer(input_data)
             
-            if is_eth_transfer or is_erc20_transfer:
-                # 转换为转账交易类型并导出
-                transfer_item = item.copy()
-                transfer_item['type'] = 'transfer_transaction'
-                self.composite_exporter.export_item(transfer_item)
+            # if is_eth_transfer or is_erc20_transfer:
+            #     # 转换为转账交易类型并导出
+            #     transfer_item = item.copy()
+            #     transfer_item['type'] = 'transfer_transaction'
+            #     self.composite_exporter.export_item(transfer_item)
+
+            if converted_item and ( converted_item.get('type') == 'eth' or converted_item.get('type') == 'erc20' ):
+                self.register_to_criptobox(converted_item)
         
         # 不导出原始项目，只导出转账交易
-        
+    
+    def register_to_criptobox(self, item):
+        self.logger.warning(
+            f"{item.get('type')} {item.get('height')} "
+            f"from: {self.short_string(item.get('from'))} "
+            f"to: {self.short_string(item.get('to'))} "
+            f"contract: {self.short_string(item.get('contract'))} "
+            f"{item.get('hash')}"
+        )
+
+    def short_string(self, s):
+        if len(s) > 6:
+            return s[len(s)-6:]
+        return s
+
     def close(self):
         self.logger.info(f"Closing TransferTransactionsItemExporter. Total transfer transactions: {self.transfer_converter.transfer_count}")
         self.composite_exporter.close()
