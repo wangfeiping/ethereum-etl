@@ -98,17 +98,10 @@ class ExportTransferTransactionsJob(BaseJob):
             for tx in block.transactions:
                 # 将交易转换为字典格式，这样TransferTransactionConverter可以处理
                 tx_dict = self.transaction_mapper.transaction_to_dict(tx)
-                self.item_exporter.export_item(tx_dict)
-                
-                # 检查是否为转账交易（ETH转账或ERC20转账）
-                is_eth_transfer = tx.value and tx.value != 0
-                is_erc20_transfer = tx.input and tx.input.startswith('0xa9059cbb')
-                
-                if is_eth_transfer or is_erc20_transfer:
+                if self.item_exporter.export_item(tx_dict):
                     transfer_count += 1
             
-            if transfer_count > 0:
-                self.logger.info(f"Block {block.number}: Found {transfer_count} transfer transactions out of {len(block.transactions)} total transactions")
+            self.logger.info(f"block {block.number}: found {transfer_count} of {len(block.transactions)} total transactions")
 
     def _end(self):
         self.batch_work_executor.shutdown()

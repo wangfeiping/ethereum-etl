@@ -233,16 +233,13 @@ class TransferTransactionsItemExporter:
 
             if converted_item and ( converted_item.get('type') == 'eth' or converted_item.get('type') == 'erc20' ):
                 self.register_to_criptobox(converted_item)
-        
-        # 不导出原始项目，只导出转账交易
+                return True
+        return False
     
     def register_to_criptobox(self, item):
         self.logger.warning(
-            f"{item.get('type')} {item.get('height')} "
-            f"from: {self.short_string(item.get('from'))} "
-            f"to: {self.short_string(item.get('to'))} "
-            f"contract: {self.short_string(item.get('contract'))} "
-            f"{item.get('hash')}"
+            f"{item.get('height')} from: {self.short_string(item.get('from'))} to: {self.short_string(item.get('to'))} "
+            f"{self.short_string(item.get('contract'))} {item.get('hash')}"
         )
 
     def short_string(self, s):
