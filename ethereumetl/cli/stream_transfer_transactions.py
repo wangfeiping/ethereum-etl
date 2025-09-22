@@ -366,7 +366,8 @@ class TransferTransactionStreamer:
                 try:
                     synced_blocks = self._sync_cycle()
                 except Exception as e:
-                    self.logger.exception('同步区块数据时发生异常')
+                    # self.logger.exception('同步区块数据时发生异常')
+                    self.logger.error(f"同步区块数据时发生异常: {e}")
                     # 可以选择是否重试
                     # raise e
                     time.sleep(self.period_seconds)
