@@ -22,6 +22,7 @@
 
 import json
 import logging
+import time
 
 from ethereumetl.executors.batch_work_executor import BatchWorkExecutor
 from blockchainetl.jobs.base_job import BaseJob
@@ -30,6 +31,36 @@ from ethereumetl.mappers.block_mapper import EthBlockMapper
 from ethereumetl.mappers.transaction_mapper import EthTransactionMapper
 from ethereumetl.utils import rpc_response_batch_to_results, validate_range
 from ethereumetl.jobs.exporters.transfer_transactions_exporter import TransferTransactionsItemExporter
+
+
+
+
+class RateLimitedBatchWorkExecutor(BatchWorkExecutor):
+    """BatchWorkExecutor with rate limiting support"""
+    
+    def __init__(self, starting_batch_size, max_workers, request_per_second=None, **kwargs):
+        super().__init__(starting_batch_size, max_workers, **kwargs)
+        self.request_per_second = request_per_second
+        self.last_request_time = 0
+        
+    def _apply_rate_limit(self):
+        """Apply rate limiting by sleeping if necessary"""
+        if self.request_per_second is None or self.request_per_second <= 0:
+            return
+            
+        current_time = time.time()
+        min_interval = 1.0 / self.request_per_second
+        elapsed = current_time - self.last_request_time
+        
+        if elapsed < min_interval:
+            sleep_time = min_interval - elapsed
+            time.sleep(sleep_time)
+            
+        self.last_request_time = time.time()
+    
+    def _fail_safe_execute(self, work_handler, batch):
+        self._apply_rate_limit()
+        super()._fail_safe_execute(work_handler, batch)
 
 
 class ExportTransferTransactionsJob(BaseJob):
@@ -45,6 +76,7 @@ class ExportTransferTransactionsJob(BaseJob):
             batch_web3_provider,
             max_workers,
             transfer_transactions_output,
+            request_per_second=None,
             export_blocks=False,
             export_transactions=True):
         validate_range(start_block, end_block)
@@ -52,7 +84,17 @@ class ExportTransferTransactionsJob(BaseJob):
         self.end_block = end_block
 
         self.batch_web3_provider = batch_web3_provider
-        self.batch_work_executor = BatchWorkExecutor(batch_size, max_workers)
+        self.request_per_second = request_per_second
+        
+        # Use rate-limited batch work executor if rate limiting is enabled
+        if request_per_second is not None and request_per_second > 0:
+            self.batch_work_executor = RateLimitedBatchWorkExecutor(
+                batch_size, max_workers, request_per_second=request_per_second
+            )
+            self.logger = logging.getLogger('ExportTransferTransactionsJob')
+            self.logger.info(f"Rate limiting enabled: {request_per_second} requests per second")
+        else:
+            self.batch_work_executor = BatchWorkExecutor(batch_size, max_workers)
         
         # 使用自定义的转账交易导出器
         self.item_exporter = TransferTransactionsItemExporter(

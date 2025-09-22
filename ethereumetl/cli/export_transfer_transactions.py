@@ -39,12 +39,14 @@ from blockchainetl.logging_utils import logging_basic_config
                    'file://$HOME/Library/Ethereum/geth.ipc or https://mainnet.infura.io')
 @click.option('-o', '--transfer-transactions-output', default='transfer_transactions.csv', show_default=True, type=str,
               help='The output file for transfer transactions. If not provided transfer transactions will not be exported.')
+@click.option('--request-per-second', default=5, show_default=True, type=float,
+              help='Maximum requests per second for RPC calls. If not specified, no rate limiting will be applied.')
 @click.option('--export-blocks/--no-export-blocks', default=False, show_default=True,
               help='Whether to export blocks.')
 @click.option('--export-transactions/--no-export-transactions', default=True, show_default=True,
               help='Whether to export transactions.')
 def export_transfer_transactions(start_block, end_block, batch_size, max_workers, provider_uri,
-                                transfer_transactions_output, export_blocks, export_transactions):
+                                transfer_transactions_output, request_per_second, export_blocks, export_transactions):
     """Exports transfer transactions (transactions with value > 0)."""
     logging_basic_config()
 
@@ -61,6 +63,7 @@ def export_transfer_transactions(start_block, end_block, batch_size, max_workers
         batch_web3_provider=ThreadLocalProxy(lambda: get_provider_from_uri(provider_uri, batch=True)),
         max_workers=max_workers,
         transfer_transactions_output=transfer_transactions_output,
+        request_per_second=request_per_second,
         export_blocks=export_blocks,
         export_transactions=export_transactions
     )
