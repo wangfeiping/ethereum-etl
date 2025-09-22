@@ -275,7 +275,7 @@ class TransferTransactionsItemExporter:
         Returns:
             list: 返回API响应中的地址数组，如果出错返回空列表
         """
-        api_url = api_url+"/api/v1/bitcoin/addresses"
+        api_url = api_url+"/api/v1/ethereum/addresses"
         # 准备请求数据
         payload = {"addresses": addresses}
         headers = {
@@ -327,7 +327,7 @@ class TransferTransactionsItemExporter:
         Returns:
             dict: 返回API响应结果，如果出错返回None
         """
-        api_url = api_url + "/api/v1/bitcoin/message"
+        api_url = api_url + "/api/v1/ethereum/message"
         # 准备请求数据
         payload = {"tx_hash": tx_hash}
         headers = {
