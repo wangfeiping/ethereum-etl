@@ -244,7 +244,7 @@ class TransferTransactionsItemExporter:
         #     f"{item.get('height')} from: {self.short_string(item.get('from'))} to: {self.short_string(item.get('to'))} "
         #     f"{self.short_string(item.get('contract'))} {item.get('hash')}"
         # )
-        addrs = [self.short_string(item.get('from')), self.short_string(item.get('to'))]
+        addrs = [item.get('from'), item.get('to')]
         addrs = self._query_addrs(addrs)
         if len(addrs) > 0:
             # self.logger.warning(f"registered Tx: {tx_hash}")
