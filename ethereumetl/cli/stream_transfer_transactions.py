@@ -417,7 +417,7 @@ class TransferTransactionStreamer:
               help='PID文件')
 @click.option('--prometheus-port', default=8000, show_default=True, type=int,
               help='Prometheus 指标服务器端口')
-@click.option('--request-per-second', default=None, show_default=True, type=float,
+@click.option('--request-per-second', default=5, show_default=True, type=float,
               help='Maximum requests per second for RPC calls. If not specified, no rate limiting will be applied.')
 @click.option('--log-level', default='WARNING', show_default=True, type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
               help='日志级别')
