@@ -368,7 +368,8 @@ class TransferTransactionStreamer:
                 except Exception as e:
                     self.logger.exception('同步区块数据时发生异常')
                     # 可以选择是否重试
-                    raise e
+                    # raise e
+                    time.sleep(self.period_seconds)
                     
                 if synced_blocks <= 0:
                     self.logger.info(f'没有需要同步的区块，休眠 {self.period_seconds} 秒...')
