@@ -63,6 +63,7 @@ class TransferTransactionStreamer:
             export_blocks=False,
             export_transactions=True,
             pid_file=None,
+            request_per_second=None,
             prometheus_port=8000):
         
         self.provider_uri = provider_uri
@@ -77,6 +78,7 @@ class TransferTransactionStreamer:
         self.export_transactions = export_transactions
         self.pid_file = pid_file
         self.prometheus_port = prometheus_port
+        self.request_per_second = request_per_second
         
         # 初始化Web3提供者
         self.batch_web3_provider = ThreadLocalProxy(lambda: get_provider_from_uri(provider_uri, batch=True))
@@ -240,6 +242,7 @@ class TransferTransactionStreamer:
                 batch_web3_provider=self.batch_web3_provider,
                 max_workers=self.max_workers,
                 transfer_transactions_output=self.transfer_transactions_output,
+                request_per_second=self.request_per_second,
                 export_blocks=self.export_blocks,
                 export_transactions=self.export_transactions
             )
@@ -414,12 +417,14 @@ class TransferTransactionStreamer:
               help='PID文件')
 @click.option('--prometheus-port', default=8000, show_default=True, type=int,
               help='Prometheus 指标服务器端口')
+@click.option('--request-per-second', default=None, show_default=True, type=float,
+              help='Maximum requests per second for RPC calls. If not specified, no rate limiting will be applied.')
 @click.option('--log-level', default='WARNING', show_default=True, type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR']),
               help='日志级别')
 def stream_transfer_transactions(
         last_synced_block_file, lag, provider_uri, transfer_transactions_output,
         start_block, period_seconds, batch_size, max_workers,
-        export_blocks, export_transactions, log_file, pid_file, prometheus_port, log_level):
+        export_blocks, export_transactions, log_file, pid_file, prometheus_port, request_per_second, log_level):
     """持续流式导出转账交易（value > 0的交易）"""
     
     # 配置日志
@@ -458,6 +463,7 @@ def stream_transfer_transactions(
         export_blocks=export_blocks,
         export_transactions=export_transactions,
         pid_file=pid_file,
+        request_per_second=request_per_second,
         prometheus_port=prometheus_port
     )
     
